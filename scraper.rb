@@ -1,25 +1,52 @@
-# This is a template for a Ruby scraper on morph.io (https://morph.io)
-# including some code snippets below that you should find helpful
+require 'scraperwiki'
+require 'date'
+require "mechanize"
 
-# require 'scraperwiki'
-# require 'mechanize'
-#
-# agent = Mechanize.new
-#
-# # Read in a page
-# page = agent.get("http://foo.com")
-#
-# # Find something on the page using css selectors
-# p page.at('div.content')
-#
-# # Write out to the sqlite database using scraperwiki library
-# ScraperWiki.save_sqlite(["name"], {"name" => "susan", "occupation" => "software developer"})
-#
-# # An arbitrary query against the database
-# ScraperWiki.select("* from data where 'name'='peter'")
+class String
+  def squish
+    string = strip
+    string.gsub!(/\s+/,' ')
+    string
+  end
+end
 
-# You don't have to do things with the Mechanize or ScraperWiki libraries.
-# You can use whatever gems you want: https://morph.io/documentation/ruby
-# All that matters is that your final data is written to an SQLite database
-# called "data.sqlite" in the current working directory which has at least a table
-# called "data".
+def convert_date(s)
+  Date.strptime(s,"%d/%m/%Y").to_s
+rescue ArgumentError
+  nil
+end
+
+agent = Mechanize.new
+
+site = "https://eplanning.huntershill.nsw.gov.au"
+url = "hhtps://eplanning.huntershill.nsw.gov.au/Pages/XC.Track/SearchApplication.aspx?e=y"
+
+page = agent.get(url)
+puts "#{url} loaded"
+csvTable = page.at(".csvTable")
+count = 0
+
+csvTable.element_children.map.each do |application|
+  next if application['class'] == "headerRow"
+  count = count + 1
+
+  info_url = application.at("#applicationReference a")['href'].squish.sub("../..",site)
+  # split bad concat addresses by strings that look like postcodes, but include the string we split on in the result
+  addresses = application.at("#applicationAddress").inner_text.squish.split(/NSW \d{4})/).each_slice(2).map(&:join)
+
+  record = {
+    "address" => addresses.first,
+    "description" => application.at("#applicationDetails").inner_text.squish
+    "date_received" => convert_date(application.at("#lodgementDate").inner_text.squish),
+    "on_notice_to" => convert_date(application.at("#exhibitionCloseDate").inner_text.squish),
+    "council_reference" => application.at("#applicationReference a").inner_text.squish,
+    "info_url" => info_url,
+    "comment_url" => "mailto:customerservice@huntershill.nsw.vic.gov.au",
+    "date_scraped" => Date.today.to_s
+  }
+  puts record
+  ScraperWiki.save_sqlite(['council_reference'], record)
+end 
+
+# Return number of applications found
+puts count
