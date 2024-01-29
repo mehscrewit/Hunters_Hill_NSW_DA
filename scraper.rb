@@ -1,52 +1,56 @@
 require 'scraperwiki'
-require 'date'
-require "mechanize"
+require 'mechanize'
+require 'json'
 
-class String
-  def squish
-    string = strip
-    string.gsub!(/\s+/, ' ')
-    string
+def scrape_api(url:, start:, length:)
+  agent = Mechanize.new
+
+  page = agent.post(
+    "#{url}/Services/ReferenceService.svc/Get_PlanningRegister",
+    { "packet" =>
+      [
+        { "name" => "iDisplayStart", "value" => start },
+        { "name" => "iDisplayLength", "value" => length },
+        { "name" => "iSortCol_0", "value" => 1 },
+        { "name" => "sSortDir_0", "value" => "desc" }
+      ]
+    }.to_json,
+    {"Content-type" => "application/json"}
+  )
+  result = JSON.parse(page.body)
+  d = JSON.parse(result["d"])
+  
+  av = d["ActivityView"]
+  av.map do |r|
+    council_reference = r['ApplicationReference'].strip
+    {
+      'council_reference' => council_reference,
+      'address' => r['SiteAddress'],
+      'description' => r['ReasonForPermit'],
+      'info_url' => "#{url}/Public/ViewActivity.aspx?refid=#{URI.encode(council_reference)}",
+      'date_scraped' => Date.today.to_s,
+      'date_received' => Date.strptime(r['LodgedDate_STRING'], "%d-%b-%Y").to_s
+    }
+  end  
+end
+
+# Get all applications that were received on or after the start date
+def scrape_api_with_paging(url:, start_date:)
+  max_per_request = 10
+
+  start = 0
+  loop do
+    results = scrape_api(url: url, start: start, length: max_per_request)
+    results.each do |r|
+      yield r if Date.parse(r["date_received"]) >= start_date
+    end
+    break if results.any? { |r| Date.parse(r["date_received"]) < start_date }
+    start += max_per_request
   end
 end
 
-def convert_date(s)
-  Date.strptime(s, "%d/%m/%Y").to_s
-rescue ArgumentError
-  nil
-end
-
-agent = Mechanize.new
-
-site = "https://eplanning.huntershill.nsw.gov.au"
-url = "https://eplanning.huntershill.nsw.gov.au/Public/PlanningRegister.aspx"
-
-page = agent.get(url)
-puts "#{url} loaded"
-csvTable = page.at(".csvTable")
-count = 0
-
-csvTable.element_children.map.each do |application|
-  next if application['class'] == "headerRow"
-  count = count + 1
-
-  info_url = application.at("#applicationReference a")['href'].squish.sub("../..",site)
-  # split bad concat addresses by strings that look like postcodes, but include the string we split on in the result 
-  addresses = application.at("#applicationAddress").inner_text.squish.split(/(NSW \d{4})/).each_slice(2).map(&:join)
-
-  record = {
-    "address" => addresses.first,
-    "description" => application.at("#applicationDetails").inner_text.squish,
-    "date_received" => convert_date(application.at("#lodgementDate").inner_text.squish),
-    "on_notice_to" => convert_date(application.at("#exhibitionCloseDate").inner_text.squish),
-    "council_reference" => application.at("#applicationReference a").inner_text.squish,
-    "info_url" => info_url,
-    "comment_url" => "mailto:dasubmissions@cityofsydney.nsw.gov.au",
-    "date_scraped" => Date.today.to_s
-  }
-  puts record
+# Get data from the last 28 days
+scrape_api_with_paging(url: "https://eplanning.huntershill.nsw.gov.au.gov.au", start_date: Date.today - 28) do |record|
+  puts "Storing #{record['council_reference']} - #{record['address']}"
   ScraperWiki.save_sqlite(['council_reference'], record)
 end
-
-# Return number of applications found
-puts count
