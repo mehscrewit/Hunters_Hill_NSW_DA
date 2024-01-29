@@ -19,7 +19,7 @@ end
 agent = Mechanize.new
 
 site = "https://eplanning.huntershill.nsw.gov.au"
-url = "https://eplanning.huntershill.nsw.gov.au/Pages/XC.Track/SearchApplication.aspx?e=y"
+url = "https://eplanning.huntershill.nsw.gov.au/Public/PlanningRegister.aspx"
 
 page = agent.get(url)
 puts "#{url} loaded"
